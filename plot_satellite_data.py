@@ -25,33 +25,31 @@ def calculate_velocity_change_rate(timestamps, velocities):
 
     return acceleration
 
-def pykalman_filter(timestamps, altitudes, velocities):
+def pykalman_filter_velocity(velocities):
+    """PyKalman smoothing for velocity data only.
+
+    Since altitude can be reliably predicted from velocity, we only need to filter
+    velocity measurements to reduce noise.
+
+    The velocity of the craft is impacted by various distinct accelerations that overlap, persist
+    and vary, over various periods of time.  These are, primarily:
+    
+      - atmospheric drag; roughly constant, proportional to altitude
+      - solar wind; varies over days
+      - propulsion
+        - short-term, high delta-v, usually seconds to minutes in duration.
+        - long-term, low delta-v (eg. Quantum Drive), usually hours to days in duration
+
+    Our job is to model these, and fit to a noisy ground-based velocity measurement.  Due to the low
+    resolution of our measurements, we probably can't distinguish between high and low delta-v
+    propulsion.  However, we're assuming this craft lacks orbital maintenance thrusters, so any
+    discontinuous acceleration detected as assumed to be due to the Quantum Drive.
+
     """
-    Simple smoothing using pykalman library for orbital data.
+    if len(velocities) < 2:
+        return np.array(velocities)
 
-    Uses independent filtering for altitude and velocity since orbital mechanics
-    relationships are complex and our simple constant velocity model doesn't apply well.
-    """
-    if len(timestamps) < 2:
-        return np.array(altitudes), np.array(velocities)
-
-    # Filter altitude independently
-    altitude_observations = np.array(altitudes).reshape(-1, 1)
-
-    # Simple random walk model for altitude (no velocity coupling)
-    kf_alt = KalmanFilter(
-        transition_matrices=np.array([[1.0]]),      # altitude[t] = altitude[t-1]
-        observation_matrices=np.array([[1.0]]),     # we observe altitude directly
-        initial_state_mean=np.array([altitudes[0]]),
-        initial_state_covariance=np.array([[10.0]]),
-        transition_covariance=np.array([[0.1]]),    # small process noise
-        observation_covariance=np.array([[2.0]])    # measurement noise
-    )
-
-    alt_states, _ = kf_alt.smooth(altitude_observations)
-    filtered_altitudes = alt_states.flatten()
-
-    # Filter velocity independently
+    # Filter velocity using PyKalman
     velocity_observations = np.array(velocities).reshape(-1, 1)
 
     kf_vel = KalmanFilter(
@@ -66,7 +64,7 @@ def pykalman_filter(timestamps, altitudes, velocities):
     vel_states, _ = kf_vel.smooth(velocity_observations)
     filtered_velocities = vel_states.flatten()
 
-    return filtered_altitudes, filtered_velocities
+    return filtered_velocities
 
 def fit_velocity_altitude_relationship(velocities, altitudes):
     """
@@ -226,24 +224,17 @@ def main():
     altitude_prediction_rmse = np.sqrt(np.mean((df['altitude'] - df['predicted_altitude'])**2))
     print(f"\nAltitude prediction accuracy: {altitude_prediction_rmse:.3f} km RMSE")
 
-    # Apply Kalman filtering to smooth the data
-    print("Applying PyKalman smoothing (forward-backward pass)...")
-    filtered_alt, filtered_vel = pykalman_filter(
-        df['datetime'].tolist(),
-        df['altitude'].tolist(),
-        df['velocity'].tolist()
-    )
-    df['filtered_altitude'] = filtered_alt
-    df['filtered_velocity'] = filtered_vel
+    # Apply PyKalman smoothing to velocity only (altitude is predicted from velocity)
+    print("Applying PyKalman smoothing to velocity (forward-backward pass)...")
+    df['filtered_velocity'] = pykalman_filter_velocity(df['velocity'].tolist())
+
+    # Predict altitude from filtered velocity as well
+    df['predicted_altitude_from_filtered_vel'] = predict_altitude_func(df['filtered_velocity'])
 
     # Calculate noise reduction metrics
-    altitude_noise_reduction = (df['altitude'].std() - df['filtered_altitude'].std()) / df['altitude'].std() * 100
     velocity_noise_reduction = (df['velocity'].std() - df['filtered_velocity'].std()) / df['velocity'].std() * 100
 
-    print(f"Kalman smoothing results:")
-    print(f"  Raw altitude std: {df['altitude'].std():.3f} km")
-    print(f"  Filtered altitude std: {df['filtered_altitude'].std():.3f} km")
-    print(f"  Altitude noise reduction: {altitude_noise_reduction:.1f}%")
+    print(f"Velocity smoothing results:")
     print(f"  Raw velocity std: {df['velocity'].std():.3f} km/h")
     print(f"  Filtered velocity std: {df['filtered_velocity'].std():.3f} km/h")
     print(f"  Velocity noise reduction: {velocity_noise_reduction:.1f}%")
@@ -271,75 +262,61 @@ def main():
         post_sept1_filtered_acceleration = np.array([])
         print("No data found after September 1st")
 
-    # Create the plot with 6 subplots (2x3 layout for better comparison)
-    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(20, 12))
-    fig.suptitle('OTP-2 Satellite Orbital Data Analysis with PyKalman Smoothing', fontsize=16, fontweight='bold')
+    # Create the plot with 4 subplots (2x2 layout)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('OTP-2 Satellite Orbital Data Analysis with Velocity-Based Altitude Prediction', fontsize=16, fontweight='bold')
 
-    # Plot 1: Raw Altitude with Velocity-based Prediction
+    # Plot 1: Altitude - Measured vs Predicted from Velocity
     ax1.plot(df['datetime'], df['altitude'], 'b-', linewidth=1, marker='o', markersize=3,
              label='Measured Altitude')
     ax1.plot(df['datetime'], df['predicted_altitude'], 'purple', linewidth=2, alpha=0.8,
-             label=f'Predicted from Velocity ({best_model_name})')
+             label=f'Predicted from Raw Velocity ({best_model_name})')
+    ax1.plot(df['datetime'], df['predicted_altitude_from_filtered_vel'], 'red', linewidth=2, alpha=0.8,
+             label='Predicted from Filtered Velocity')
     ax1.set_ylabel('Altitude (km)', fontweight='bold')
-    ax1.set_title('Altitude vs Time: Measured vs Predicted from Velocity')
+    ax1.set_title('Altitude: Measured vs Predicted from Velocity')
     ax1.grid(True, alpha=0.3)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
     ax1.tick_params(axis='x', rotation=45)
     ax1.legend()
 
-    # Plot 2: PyKalman Smoothed Altitude
-    ax2.plot(df['datetime'], df['filtered_altitude'], 'r-', linewidth=2)
-    ax2.set_ylabel('Altitude (km)', fontweight='bold')
-    ax2.set_title('PyKalman Smoothed Altitude vs Time')
+    # Plot 2: Velocity - Raw vs PyKalman Smoothed
+    ax2.plot(df['datetime'], df['velocity'], 'b-', linewidth=1, marker='o', markersize=2,
+             alpha=0.7, label='Raw Velocity')
+    ax2.plot(df['datetime'], df['filtered_velocity'], 'r-', linewidth=2,
+             label='PyKalman Smoothed Velocity')
+    ax2.set_ylabel('Velocity (km/h)', fontweight='bold')
+    ax2.set_title('Velocity vs Time (Raw vs PyKalman Smoothed)')
     ax2.grid(True, alpha=0.3)
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
     ax2.tick_params(axis='x', rotation=45)
+    ax2.legend()
 
-    # Plot 3: Raw vs PyKalman Smoothed Velocity
-    ax3.plot(df['datetime'], df['velocity'], 'b-', linewidth=1, marker='o', markersize=2,
-             alpha=0.7, label='Raw Data')
-    ax3.plot(df['datetime'], df['filtered_velocity'], 'r-', linewidth=2,
-             label='PyKalman Smoothed')
-    ax3.set_ylabel('Velocity (km/h)', fontweight='bold')
-    ax3.set_title('Velocity vs Time (Raw vs PyKalman Smoothed)')
-    ax3.grid(True, alpha=0.3)
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-    ax3.tick_params(axis='x', rotation=45)
-    ax3.legend()
-
-    # Plot 4: Raw Acceleration
-    if len(acceleration) > 0:
-        ax4.plot(df['datetime'], acceleration, 'g-', linewidth=1, marker='o', markersize=2)
-        ax4.set_ylabel('Acceleration (km/h²)', fontweight='bold')
-        ax4.set_title('Raw Acceleration vs Time')
-        ax4.grid(True, alpha=0.3)
-        ax4.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-        ax4.tick_params(axis='x', rotation=45)
-        ax4.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax4.axvline(x=sept_1_2025, color='r', linestyle=':', alpha=0.7)
-
-    # Plot 5: PyKalman Smoothed Acceleration
-    if len(filtered_acceleration) > 0:
-        ax5.plot(df['datetime'], filtered_acceleration, 'orange', linewidth=2)
-        ax5.set_ylabel('Acceleration (km/h²)', fontweight='bold')
-        ax5.set_title('PyKalman Smoothed Acceleration vs Time')
-        ax5.grid(True, alpha=0.3)
-        ax5.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-        ax5.tick_params(axis='x', rotation=45)
-        ax5.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax5.axvline(x=sept_1_2025, color='r', linestyle=':', alpha=0.7,
+    # Plot 3: Acceleration Comparison
+    if len(acceleration) > 0 and len(filtered_acceleration) > 0:
+        ax3.plot(df['datetime'], acceleration, 'g-', linewidth=1, marker='o', markersize=2,
+                alpha=0.7, label='Raw Acceleration')
+        ax3.plot(df['datetime'], filtered_acceleration, 'orange', linewidth=2,
+                label='Smoothed Acceleration')
+        ax3.set_ylabel('Acceleration (km/h²)', fontweight='bold')
+        ax3.set_title('Acceleration vs Time (Raw vs Smoothed)')
+        ax3.grid(True, alpha=0.3)
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+        ax3.tick_params(axis='x', rotation=45)
+        ax3.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        ax3.axvline(x=sept_1_2025, color='r', linestyle=':', alpha=0.7,
                    label='Sept 1 (Thruster Test Period)')
-        ax5.legend()
+        ax3.legend()
 
-    # Plot 6: Focused acceleration analysis (post-September 1st)
+    # Plot 4: Focused acceleration analysis (post-September 1st)
     if len(df_post_sept1) > 0 and len(post_sept1_acceleration) > 0:
         # Plot both raw and filtered acceleration
-        ax6.plot(df_post_sept1['datetime'], post_sept1_acceleration,
+        ax4.plot(df_post_sept1['datetime'], post_sept1_acceleration,
                 'lightblue', linewidth=1, marker='o', markersize=3, alpha=0.7,
                 label='Raw Acceleration')
 
         if len(post_sept1_filtered_acceleration) > 0:
-            ax6.plot(df_post_sept1['datetime'], post_sept1_filtered_acceleration,
+            ax4.plot(df_post_sept1['datetime'], post_sept1_filtered_acceleration,
                     'orange', linewidth=2, marker='s', markersize=4,
                     label='PyKalman Smoothed')
 
@@ -351,7 +328,7 @@ def main():
             rolling_std = pd.Series(analysis_data).rolling(window=window_size, center=True).std()
 
             # Plot rolling mean
-            ax6.plot(df_post_sept1['datetime'], rolling_mean,
+            ax4.plot(df_post_sept1['datetime'], rolling_mean,
                     'red', linewidth=2, alpha=0.7, label=f'Rolling Mean ({window_size}pt)')
 
             # Highlight potential anomalies (>2 standard deviations from rolling mean)
@@ -360,7 +337,7 @@ def main():
             lower_bound = rolling_mean - anomaly_threshold * rolling_std
 
             # Fill the normal range
-            ax6.fill_between(df_post_sept1['datetime'], lower_bound, upper_bound,
+            ax4.fill_between(df_post_sept1['datetime'], lower_bound, upper_bound,
                            alpha=0.2, color='gray', label=f'±{anomaly_threshold}σ range')
 
             # Mark potential thruster events (acceleration spikes)
@@ -368,17 +345,17 @@ def main():
                 df_post_sept1['datetime'], analysis_data, rolling_mean, rolling_std)):
                 if not pd.isna(mean_val) and not pd.isna(std_val) and std_val > 0:
                     if abs(acc - mean_val) > anomaly_threshold * std_val:
-                        ax6.scatter(dt, acc, color='red', s=100, marker='*',
+                        ax4.scatter(dt, acc, color='red', s=100, marker='*',
                                   zorder=5, alpha=0.8)
 
-        ax6.set_ylabel('Acceleration (km/h²)', fontweight='bold')
-        ax6.set_title('Focused Acceleration Analysis (Post-Sept 1, PyKalman Smoothed)',
+        ax4.set_ylabel('Acceleration (km/h²)', fontweight='bold')
+        ax4.set_title('Focused Acceleration Analysis (Post-Sept 1, PyKalman Smoothed)',
                      fontweight='bold')
-        ax6.grid(True, alpha=0.3)
-        ax6.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-        ax6.tick_params(axis='x', rotation=45)
-        ax6.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax6.legend()
+        ax4.grid(True, alpha=0.3)
+        ax4.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
+        ax4.tick_params(axis='x', rotation=45)
+        ax4.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        ax4.legend()
 
         # Print potential thruster events
         if window_size >= 3:
@@ -405,14 +382,13 @@ def main():
             else:
                 print("\nNo significant acceleration anomalies detected")
     else:
-        ax6.text(0.5, 0.5, 'No data available\nfor post-Sept 1 analysis',
-                ha='center', va='center', transform=ax6.transAxes, fontsize=12)
-        ax6.set_title('Focused Acceleration Analysis (Post-Sept 1)')
+        ax4.text(0.5, 0.5, 'No data available\nfor post-Sept 1 analysis',
+                ha='center', va='center', transform=ax4.transAxes, fontsize=12)
+        ax4.set_title('Focused Acceleration Analysis (Post-Sept 1)')
 
     # Set x-axis labels for bottom row
+    ax3.set_xlabel('Time', fontweight='bold')
     ax4.set_xlabel('Time', fontweight='bold')
-    ax5.set_xlabel('Time', fontweight='bold')
-    ax6.set_xlabel('Time', fontweight='bold')
 
     # Adjust layout to prevent overlap
     plt.tight_layout()
@@ -434,18 +410,21 @@ def main():
         print(f"  Average acceleration: {acceleration.mean():.8f} km/h²")
         print(f"  Acceleration std deviation: {acceleration.std():.8f} km/h²")
 
-    print(f"\nPyKalman Smoothed Data:")
-    print(f"  Altitude range: {df['filtered_altitude'].min():.1f} - {df['filtered_altitude'].max():.1f} km")
+    print(f"\nPyKalman Smoothed Velocity Data:")
     print(f"  Velocity range: {df['filtered_velocity'].min():.1f} - {df['filtered_velocity'].max():.1f} km/h")
     if len(filtered_acceleration) > 0:
         print(f"  Acceleration range: {filtered_acceleration.min():.8f} - {filtered_acceleration.max():.8f} km/h²")
         print(f"  Average acceleration: {filtered_acceleration.mean():.8f} km/h²")
         print(f"  Acceleration std deviation: {filtered_acceleration.std():.8f} km/h²")
 
+    print(f"\nPredicted Altitude from Filtered Velocity:")
+    print(f"  Altitude range: {df['predicted_altitude_from_filtered_vel'].min():.1f} - {df['predicted_altitude_from_filtered_vel'].max():.1f} km")
+
     # Acceleration noise reduction metrics
     if len(acceleration) > 0 and len(filtered_acceleration) > 0:
         acc_noise_reduction = (acceleration.std() - filtered_acceleration.std()) / acceleration.std() * 100
-        print(f"\nPyKalman Smoothing Performance:")
+        print(f"\nPyKalman Velocity Smoothing Performance:")
+        print(f"  Velocity noise reduction: {velocity_noise_reduction:.1f}%")
         print(f"  Acceleration noise reduction: {acc_noise_reduction:.1f}%")
         print(f"  Forward-backward smoothing provides optimal estimates using complete dataset")
 
