@@ -25,10 +25,10 @@ def calculate_velocity_change_rate(timestamps, velocities):
 
 def main():
     # Read the tab-separated CSV file
-    print("Reading data from 2025-052AB-data2.csv...")
+    print("Reading data from 2025-052AB-data.csv...")
 
     # Read the file with tab separator and proper column names
-    df = pd.read_csv('2025-052AB-data2.csv',
+    df = pd.read_csv('2025-052AB-data.csv',
                      sep='\t',
                      header=None,
                      names=['satellite', 'timestamp', 'altitude', 'velocity', 'time_ago'])

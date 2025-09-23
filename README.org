@@ -1,0 +1,120 @@
+#+TITLE: OTP-2 Satellite Thrust Analysis
+#+AUTHOR: Analysis of OTP-2 Orbital Data for Thruster Test Detection
+#+DATE: 2025-09-23
+
+* OTP-2 Thrust Detection
+
+This project analyzes orbital data from the OTP-2 satellite (2025-052AB) to detect potential thruster test artifacts through acceleration analysis.
+
+** Latest Analysis Results
+
+[[./satellite_analysis_with_thruster.png]]
+
+The analysis shows:
+- *Top Left*: Altitude vs Time - Overall orbital altitude changes
+- *Top Right*: Velocity vs Time - Orbital velocity in km/h
+- *Bottom Left*: Full timeline acceleration analysis
+- *Bottom Right*: Focused acceleration analysis (post-September 1st) with anomaly detection
+
+** Data Source
+
+Fresh orbital data can be obtained from:
+https://orbit.ing-now.com/satellite/63235/2025-052ab/otp-2/
+
+*** Obtaining Fresh Data
+
+1. Visit the orbit tracking website above
+2. Change to Show 100 Entries and copy the TLE History data
+4. Save as =2025-052AB-data.csv= in this directory
+
+*Note*: The expected format is tab-separated with columns:
+- Satellite name (OTP-2)
+- Timestamp with timezone (YYYY-MM-DDTHH:MM:SS+00:00 format)
+- Altitude (km)
+- Velocity (km/h)
+- Time ago description
+
+** Running the Analysis
+
+*** Option 1: Using Nix (Recommended)
+
+#+BEGIN_SRC bash
+# Enter the nix development environment
+nix develop
+
+# Or run directly
+make nix-plot
+#+END_SRC
+
+*** Option 2: Using Python Virtual Environment
+
+#+BEGIN_SRC bash
+# Create and activate virtual environment using Nix-supplied components
+make nix-venv
+
+# Or run plotting in venv
+make nix-venv-plot
+#+END_SRC
+
+*** Option 3: Manual Installation
+
+#+BEGIN_SRC bash
+# Install dependencies
+pip install pandas matplotlib numpy
+
+# Run the analysis
+python plot_satellite_data.py
+#+END_SRC
+
+** Generated Output
+
+The script generates:
+- =satellite_analysis_with_thruster.png= - Complete 4-panel analysis plot
+- Console output with statistical analysis and detected anomalies
+
+** Thruster Test Detection
+
+The analysis focuses on acceleration anomalies after September 1st, 2025:
+
+- *Rolling Statistics*: 5-point rolling mean and standard deviation
+- *Anomaly Detection*: Events exceeding 2σ from rolling mean
+- *Visual Markers*: Red stars mark potential thruster events
+- *Statistical Report*: Lists significant acceleration events with timestamps
+
+** Build Targets
+
+Available make targets:
+
+#+BEGIN_SRC bash
+make help          # Show all available targets
+make plot          # Run the satellite data plotting script
+make nix-venv      # Create and activate Python virtual environment
+make nix-venv-plot # Run plotting in Nix + virtual environment
+make nix-plot      # Run plotting in Nix environment
+make install       # Install Python dependencies
+make clean         # Remove build artifacts and virtual environments
+#+END_SRC
+
+** Dependencies
+
+- Python 3.7+
+- pandas
+- matplotlib
+- numpy
+
+Optional (included in nix environment):
+- jupyter
+- seaborn
+- scipy
+
+** Project Structure
+
+#+BEGIN_SRC
+.
+├── README.org                             # This file
+├── Makefile                               # Build automation
+├── flake.nix                              # Nix development environment
+├── plot_satellite_data.py                 # Main analysis script
+├── 2025-052AB-data.csv                    # Orbital data (tab-separated)
+└── satellite_analysis_with_thruster.png   # Generated analysis plot
+#+END_SRC
