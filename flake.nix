@@ -20,6 +20,9 @@
           ipython
           seaborn
           scipy
+          pykalman
+          # Testing
+          pytest
         ]);
       in
       {

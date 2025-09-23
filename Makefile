@@ -32,6 +32,7 @@ help:
 	@echo "  install		Install Python dependencies"
 	@echo "  plot			Run the satellite data plotting script"
 	@echo "  clean			Remove build artifacts and virtual environments"
+	@echo "  test			Run pytest unit tests"
 
 # VirtualEnv targets - based on python-slip39 pattern
 venv-%:			$(VENV)
@@ -66,8 +67,12 @@ install:
 plot:
 	$(PYTHON) plot_satellite_data.py
 
+# Run pytest unit tests
+test:
+	$(PYTHON) -m pytest test_kalman_filter.py -v
+
 clean:
-	@rm -rf $(VENV) *.png __pycache__ *.pyc
+	@rm -rf $(VENV) *.png __pycache__ *.pyc .pytest_cache
 
 # Print make variables
 print-%:
